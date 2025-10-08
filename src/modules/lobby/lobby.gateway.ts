@@ -1,4 +1,6 @@
+/* eslint-disable @typescript-eslint/no-unsafe-enum-comparison */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
+// src/modules/lobby/lobby.gateway.ts
 import {
   WebSocketGateway,
   WebSocketServer,
@@ -8,11 +10,12 @@ import {
   MessageBody,
   ConnectedSocket,
 } from '@nestjs/websockets';
-import { Logger, UsePipes, ValidationPipe } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { LobbyService } from './lobby.service';
 import { GameService } from '../game/game.service';
-import { LobbyStatus } from '../../common/interfaces/lobby.interface';
+import { AnalyticsService } from '../analytics/analytics.service';
+import { RedisService } from '../redis/redis.service';
 import { GAME_CONFIG } from '../../common/constants/game.constants';
 import {
   CreateLobbyDto,
@@ -26,7 +29,6 @@ import {
   },
   transports: ['websocket', 'polling'],
 })
-@UsePipes(new ValidationPipe())
 export class LobbyGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
@@ -36,13 +38,19 @@ export class LobbyGateway implements OnGatewayConnection, OnGatewayDisconnect {
   constructor(
     private readonly lobbyService: LobbyService,
     private readonly gameService: GameService,
+    private readonly analyticsService: AnalyticsService,
+    private readonly redisService: RedisService,
   ) {}
 
   /**
    * Handle new client connections
    */
-  handleConnection(client: Socket) {
+  async handleConnection(client: Socket) {
     this.logger.log(`Client connected: ${client.id}`);
+
+    // Track connection
+    await this.analyticsService.trackConnection(true);
+
     client.emit('connected', { clientId: client.id });
   }
 
@@ -52,32 +60,43 @@ export class LobbyGateway implements OnGatewayConnection, OnGatewayDisconnect {
   async handleDisconnect(client: Socket) {
     this.logger.log(`Client disconnected: ${client.id}`);
 
+    // Track disconnection
+    await this.analyticsService.trackConnection(false);
+
     try {
-      const result = await this.lobbyService.leaveLobby(client.id);
+      // IMPORTANT: Use actual userId if authenticated, socket id for guests
+      const userId = client.data.user?.userId || client.id;
+
+      const result = await this.lobbyService.leaveLobby(userId);
 
       if (result.lobby && result.lobbyId) {
-        // Notify remaining players
         const gameState = this.lobbyService.toGameState(result.lobby);
         this.server.to(result.lobbyId).emit(GAME_CONFIG.EVENTS.PLAYER_LEFT, {
-          playerId: client.id,
+          playerId: userId,
           gameState,
         });
         this.server
           .to(result.lobbyId)
           .emit(GAME_CONFIG.EVENTS.LOBBY_UPDATED, gameState);
       } else if (result.lobbyId) {
-        // Lobby was deleted
         this.server.to(result.lobbyId).emit(GAME_CONFIG.EVENTS.LOBBY_UPDATED, {
           message: 'Lobby closed',
         });
       }
+
+      // Clean up socket-to-userId mapping
+      if (client.data.user?.userId) {
+        await this.redisService.client.del(`socket:${client.id}:userId`);
+      }
     } catch (error) {
       this.logger.error(`Error handling disconnect: ${error.message}`);
+      await this.analyticsService.trackError('disconnect_error');
     }
   }
 
   /**
    * CREATE LOBBY
+   * CHANGE: Now uses persistent userId instead of socket client.id
    */
   @SubscribeMessage(GAME_CONFIG.EVENTS.CREATE_LOBBY)
   async handleCreateLobby(
@@ -85,28 +104,42 @@ export class LobbyGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
   ) {
     try {
-      const lobby = await this.lobbyService.createLobby(
-        client.id,
-        data.username,
-      );
+      await this.analyticsService.trackMessage();
 
-      // Join socket room
+      // CHANGE: Use persistent userId from JWT if authenticated, socket id for guests
+      const userId = client.data.user?.userId || client.id;
+      const username = client.data.user?.username || data.username;
+
+      // CHANGE: Store mapping of socket ID to user ID for cross-reference
+      if (client.data.user?.userId) {
+        await this.redisService.client.setex(
+          `socket:${client.id}:userId`,
+          3600,
+          client.data.user.userId,
+        );
+      }
+
+      const lobby = await this.lobbyService.createLobby(userId, username);
+
       await client.join(lobby.id);
 
       const gameState = this.lobbyService.toGameState(lobby);
 
-      // Send response to creator
       client.emit(GAME_CONFIG.EVENTS.LOBBY_CREATED, {
         success: true,
         lobbyId: lobby.id,
         gameState,
       });
 
-      this.logger.log(`Lobby ${lobby.id} created by ${data.username}`);
+      // CHANGE: Better logging with userId
+      this.logger.log(
+        `Lobby ${lobby.id} created by ${username} (userId: ${userId})`,
+      );
 
       return { success: true, lobbyId: lobby.id };
     } catch (error) {
       this.logger.error(`Error creating lobby: ${error.message}`);
+      await this.analyticsService.trackError('create_lobby_error');
       client.emit(GAME_CONFIG.EVENTS.ERROR, {
         message: error.message || 'Failed to create lobby',
       });
@@ -116,6 +149,7 @@ export class LobbyGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   /**
    * JOIN LOBBY
+   * CHANGE: Now uses persistent userId instead of socket client.id
    */
   @SubscribeMessage(GAME_CONFIG.EVENTS.JOIN_LOBBY)
   async handleJoinLobby(
@@ -123,34 +157,57 @@ export class LobbyGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
   ) {
     try {
+      await this.analyticsService.trackMessage();
+
+      // CHANGE: Use persistent userId from JWT if authenticated, socket id for guests
+      const userId = client.data.user?.userId || client.id;
+      const username = client.data.user?.username || data.username;
+
+      // CHANGE: Store mapping of socket ID to user ID for cross-reference
+      if (client.data.user?.userId) {
+        await this.redisService.client.setex(
+          `socket:${client.id}:userId`,
+          3600,
+          client.data.user.userId,
+        );
+      }
+
       const lobby = await this.lobbyService.joinLobby(
         data.lobbyId,
-        client.id,
-        data.username,
+        userId,
+        username,
       );
 
-      // Join socket room
       await client.join(lobby.id);
 
       const gameState = this.lobbyService.toGameState(lobby);
 
-      // Notify all players in the lobby
       this.server.to(lobby.id).emit(GAME_CONFIG.EVENTS.PLAYER_JOINED, {
-        playerId: client.id,
-        username: data.username,
+        playerId: userId,
+        username: username,
         gameState,
       });
 
-      // Update lobby state for all
       this.server
         .to(lobby.id)
         .emit(GAME_CONFIG.EVENTS.LOBBY_UPDATED, gameState);
 
-      this.logger.log(`${data.username} joined lobby ${data.lobbyId}`);
+      // Track player activity if authenticated
+      if (client.data.user?.userId) {
+        await this.analyticsService.trackPlayerActivity(
+          client.data.user.userId,
+        );
+      }
+
+      // CHANGE: Better logging with userId
+      this.logger.log(
+        `${username} (userId: ${userId}) joined lobby ${data.lobbyId}`,
+      );
 
       return { success: true };
     } catch (error) {
       this.logger.error(`Error joining lobby: ${error.message}`);
+      await this.analyticsService.trackError('join_lobby_error');
       client.emit(GAME_CONFIG.EVENTS.ERROR, {
         message: error.message || 'Failed to join lobby',
       });
@@ -160,21 +217,25 @@ export class LobbyGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   /**
    * LEAVE LOBBY
+   * CHANGE: Now uses persistent userId instead of socket client.id
    */
   @SubscribeMessage(GAME_CONFIG.EVENTS.LEAVE_LOBBY)
   async handleLeaveLobby(@ConnectedSocket() client: Socket) {
     try {
-      const result = await this.lobbyService.leaveLobby(client.id);
+      await this.analyticsService.trackMessage();
+
+      // CHANGE: Use persistent userId from JWT if authenticated
+      const userId = client.data.user?.userId || client.id;
+
+      const result = await this.lobbyService.leaveLobby(userId);
 
       if (result.lobby && result.lobbyId) {
-        // Leave socket room
         await client.leave(result.lobbyId);
 
         const gameState = this.lobbyService.toGameState(result.lobby);
 
-        // Notify remaining players
         this.server.to(result.lobbyId).emit(GAME_CONFIG.EVENTS.PLAYER_LEFT, {
-          playerId: client.id,
+          playerId: userId,
           gameState,
         });
         this.server
@@ -189,6 +250,7 @@ export class LobbyGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return { success: true };
     } catch (error) {
       this.logger.error(`Error leaving lobby: ${error.message}`);
+      await this.analyticsService.trackError('leave_lobby_error');
       client.emit(GAME_CONFIG.EVENTS.ERROR, {
         message: error.message || 'Failed to leave lobby',
       });
@@ -198,6 +260,7 @@ export class LobbyGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   /**
    * PLAYER READY
+   * CHANGE: Now uses persistent userId instead of socket client.id
    */
   @SubscribeMessage(GAME_CONFIG.EVENTS.PLAYER_READY)
   async handlePlayerReady(
@@ -205,18 +268,21 @@ export class LobbyGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
   ) {
     try {
+      await this.analyticsService.trackMessage();
+
+      // CHANGE: Use persistent userId from JWT if authenticated
+      const userId = client.data.user?.userId || client.id;
+
       const lobby = await this.lobbyService.setPlayerReady(
-        client.id,
+        userId,
         data.isReady,
       );
       const gameState = this.lobbyService.toGameState(lobby);
 
-      // Broadcast updated state
       this.server
         .to(lobby.id)
         .emit(GAME_CONFIG.EVENTS.LOBBY_UPDATED, gameState);
 
-      // Check if game can start
       if (this.lobbyService.canStartGame(lobby)) {
         await this.startGame(lobby.id);
       }
@@ -224,6 +290,7 @@ export class LobbyGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return { success: true };
     } catch (error) {
       this.logger.error(`Error setting player ready: ${error.message}`);
+      await this.analyticsService.trackError('player_ready_error');
       client.emit(GAME_CONFIG.EVENTS.ERROR, {
         message: error.message || 'Failed to set ready status',
       });
@@ -238,21 +305,27 @@ export class LobbyGateway implements OnGatewayConnection, OnGatewayDisconnect {
     try {
       this.logger.log(`Starting game for lobby ${lobbyId}`);
 
-      // Send countdown
+      const lobby = await this.lobbyService.getLobby(lobbyId);
+      if (lobby) {
+        await this.analyticsService.trackGameStart(
+          lobby.id,
+          lobby.players.size,
+        );
+      }
+
       this.server.to(lobbyId).emit(GAME_CONFIG.EVENTS.GAME_STARTING, {
         countdown: GAME_CONFIG.LOBBY_START_DELAY / 1000,
         message: 'Game starting soon!',
       });
 
-      // Wait for countdown
       await new Promise((resolve) =>
         setTimeout(resolve, GAME_CONFIG.LOBBY_START_DELAY),
       );
 
-      // Initialize game
       await this.gameService.startGame(lobbyId, this.server);
     } catch (error) {
       this.logger.error(`Error starting game: ${error.message}`);
+      await this.analyticsService.trackError('start_game_error');
       this.server.to(lobbyId).emit(GAME_CONFIG.EVENTS.ERROR, {
         message: 'Failed to start game',
       });
@@ -261,6 +334,7 @@ export class LobbyGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   /**
    * SUBMIT ANSWER
+   * CHANGE: Now uses persistent userId instead of socket client.id
    */
   @SubscribeMessage(GAME_CONFIG.EVENTS.SUBMIT_ANSWER)
   async handleSubmitAnswer(
@@ -268,37 +342,44 @@ export class LobbyGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
   ) {
     try {
-      const lobby = await this.lobbyService.getPlayerLobby(client.id);
+      await this.analyticsService.trackMessage();
 
-      if (!lobby) {
+      // CHANGE: Use persistent userId from JWT if authenticated
+      const userId = client.data.user?.userId || client.id;
+
+      const lobbyId = await this.lobbyService.getPlayerLobby(userId);
+
+      if (!lobbyId) {
         throw new Error('You are not in a lobby');
       }
 
-      if (!lobby || lobby.status !== LobbyStatus.IN_PROGRESS) {
+      const lobby = await this.lobbyService.getLobby(lobbyId.id);
+
+      if (!lobby || lobby.status !== 'IN_PROGRESS') {
         throw new Error('Game is not in progress');
       }
 
-      // Submit answer
-      await this.gameService.submitAnswer(lobby.id, client.id, {
-        playerId: client.id,
+      await this.gameService.submitAnswer(lobbyId.id, userId, {
+        playerId: userId,
         questionId: data.questionId,
         selectedOption: data.selectedOption,
         submittedAt: Date.now(),
       });
 
-      // Send acknowledgment to player
       client.emit('answer_submitted', {
         success: true,
         message: 'Answer submitted successfully',
       });
 
+      // CHANGE: Better logging with userId
       this.logger.log(
-        `Player ${client.id} submitted answer for question ${data.questionId}`,
+        `Player ${userId} submitted answer for question ${data.questionId}`,
       );
 
       return { success: true };
     } catch (error) {
       this.logger.error(`Error submitting answer: ${error.message}`);
+      await this.analyticsService.trackError('submit_answer_error');
       client.emit(GAME_CONFIG.EVENTS.ERROR, {
         message: error.message || 'Failed to submit answer',
       });

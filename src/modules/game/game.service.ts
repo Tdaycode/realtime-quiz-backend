@@ -1,7 +1,13 @@
+/* eslint-disable @typescript-eslint/no-misused-promises */
+/* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
+// src/modules/game/game.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { Server } from 'socket.io';
 import { RedisService } from '../redis/redis.service';
+import { HistoryService } from '../history/history.service';
+import { UserService } from '../user/user.service';
+import { AnalyticsService } from '../analytics/analytics.service';
 import { Lobby, LobbyStatus } from '../../common/interfaces/lobby.interface';
 import { Question, Answer } from '../../common/interfaces/question.interface';
 import {
@@ -14,9 +20,15 @@ import { QUESTIONS_POOL } from '../../data/questions.data';
 @Injectable()
 export class GameService {
   private readonly logger = new Logger(GameService.name);
-  private readonly activeGames: Map<string, NodeJS.Timeout> = new Map();
+  private activeGames: Map<string, NodeJS.Timeout> = new Map();
+  private gameStartTimes: Map<string, number> = new Map();
 
-  constructor(private readonly redisService: RedisService) {}
+  constructor(
+    private readonly redisService: RedisService,
+    private readonly historyService: HistoryService,
+    private readonly userService: UserService,
+    private readonly analyticsService: AnalyticsService,
+  ) {}
 
   /**
    * Start the game for a lobby
@@ -33,6 +45,9 @@ export class GameService {
       lobby.status = LobbyStatus.IN_PROGRESS;
       lobby.currentRound = 1;
       await this.redisService.saveLobby(lobbyId, lobby);
+
+      // Track game start time
+      this.gameStartTimes.set(lobbyId, Date.now());
 
       this.logger.log(`Game started for lobby ${lobbyId}`);
 
@@ -85,8 +100,8 @@ export class GameService {
     this.logger.log(`Round ${lobby.currentRound} started for lobby ${lobbyId}`);
 
     // Set timeout to end round
-    const timeout = setTimeout(() => {
-      void this.endRound(lobbyId, server);
+    const timeout = setTimeout(async () => {
+      await this.endRound(lobbyId, server);
     }, GAME_CONFIG.QUESTION_TIME_LIMIT);
 
     this.activeGames.set(lobbyId, timeout);
@@ -102,7 +117,7 @@ export class GameService {
   ): Promise<void> {
     const lobby = await this.redisService.getLobby(lobbyId);
 
-    if (!lobby?.currentQuestion) {
+    if (!lobby || !lobby.currentQuestion) {
       throw new Error('No active question');
     }
 
@@ -125,7 +140,7 @@ export class GameService {
     const isCorrect =
       answer.selectedOption === lobby.currentQuestion.correctAnswer;
     const responseTime =
-      answer.submittedAt - (lobby?.questionStartTime ?? Date.now());
+      answer.submittedAt - (lobby.questionStartTime || Date.now());
     const score = this.calculateScore(
       isCorrect,
       responseTime,
@@ -194,7 +209,7 @@ export class GameService {
   private async endRound(lobbyId: string, server: Server): Promise<void> {
     const lobby = await this.redisService.getLobby(lobbyId);
 
-    if (!lobby?.currentQuestion) {
+    if (!lobby || !lobby.currentQuestion) {
       return;
     }
 
@@ -232,8 +247,8 @@ export class GameService {
       await this.redisService.saveLobby(lobbyId, lobby);
 
       // 3 second delay before next round
-      setTimeout(() => {
-        void this.startRound(lobbyId, server);
+      setTimeout(async () => {
+        await this.startRound(lobbyId, server);
       }, 3000);
     }
   }
@@ -259,6 +274,27 @@ export class GameService {
     // Determine winner
     const winner = finalLeaderboard[0];
 
+    // Calculate game duration
+    const startTime = this.gameStartTimes.get(lobbyId) || Date.now();
+    const endTime = Date.now();
+    const duration = endTime - startTime;
+
+    // Save game history
+    try {
+      await this.saveGameHistory(
+        lobby,
+        finalLeaderboard,
+        startTime,
+        endTime,
+        duration,
+      );
+    } catch (error) {
+      this.logger.error(`Failed to save game history: ${error.message}`);
+    }
+
+    // Track game end in analytics
+    await this.analyticsService.trackGameEnd(lobbyId, duration);
+
     // Broadcast game end
     server.to(lobbyId).emit(GAME_CONFIG.EVENTS.GAME_END, {
       finalLeaderboard,
@@ -269,12 +305,88 @@ export class GameService {
       message: `🎉 ${winner.username} wins with ${winner.score} points!`,
     });
 
+    // Clean up game start time
+    this.gameStartTimes.delete(lobbyId);
+
     // Clean up after 30 seconds
-    setTimeout(() => {
-      void this.redisService.deleteLobby(lobbyId).then(() => {
-        this.logger.log(`Lobby ${lobbyId} cleaned up`);
-      });
+    setTimeout(async () => {
+      await this.redisService.deleteLobby(lobbyId);
+      this.logger.log(`Lobby ${lobbyId} cleaned up`);
     }, 30000);
+  }
+
+  /**
+   * Save game history and update user stats
+   */
+
+  private async saveGameHistory(
+    lobby: Lobby,
+    leaderboard: LeaderboardEntry[],
+    startTime: number,
+    endTime: number,
+    duration: number,
+  ): Promise<void> {
+    try {
+      // Prepare player results
+      const players = leaderboard.map((entry) => {
+        const player = lobby.players.get(entry.playerId);
+        console.log('player ==>', player);
+        return {
+          userId: entry.playerId,
+          username: entry.username,
+          finalScore: entry.score,
+          rank: entry.rank,
+          correctAnswers: 0, // Would need to track this during game
+          incorrectAnswers: 0, // Would need to track this during game
+          averageResponseTime: 0, // Would need to track this during game
+          bestStreak: entry.streak,
+        };
+      });
+
+      console.log('players ==>', players);
+
+      // Prepare question results (simplified for now)
+      const questions = [];
+
+      // Save to history
+      const gameId = await this.historyService.saveGame({
+        lobbyId: lobby.id,
+        players,
+        questions,
+        startedAt: startTime,
+        endedAt: endTime,
+        duration,
+        winner: {
+          userId: leaderboard[0].playerId,
+          username: leaderboard[0].username,
+          score: leaderboard[0].score,
+        },
+      });
+
+      this.logger.log(`Game history saved: ${gameId}`);
+
+      // Update user stats for each player
+      for (const playerResult of players) {
+        try {
+          await this.userService.updateStats(playerResult.userId, {
+            score: playerResult.finalScore,
+            won: playerResult.rank === 1,
+            maxStreak: playerResult.bestStreak,
+            fastestAnswer: 0, // Would need to track this during game
+          });
+        } catch (error) {
+          // Player might be a guest (no user account) - this is expected
+          this.logger.warn(
+            `Could not update stats for player ${playerResult.userId}: ${error.message}`,
+          );
+        }
+      }
+
+      this.logger.log(`Updated stats for ${players.length} players`);
+    } catch (error) {
+      this.logger.error(`Failed to save game history: ${error.message}`);
+      throw error;
+    }
   }
 
   /**
@@ -322,5 +434,8 @@ export class GameService {
     // Clear all active timeouts
     this.activeGames.forEach((timeout) => clearTimeout(timeout));
     this.activeGames.clear();
+
+    // Clear game start times
+    this.gameStartTimes.clear();
   }
 }

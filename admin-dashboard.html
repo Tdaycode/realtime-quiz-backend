@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quiz App - Admin Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f5f7fa;
+            color: #333;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px 40px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .header h1 {
+            font-size: 1.8em;
+            margin-bottom: 5px;
+        }
+        .header p {
+            opacity: 0.9;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 30px auto;
+            padding: 0 20px;
+        }
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .metric-card {
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            transition: transform 0.2s;
+        }
+        .metric-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.15);
+        }
+        .metric-label {
+            font-size: 0.9em;
+            color: #666;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .metric-value {
+            font-size: 2.5em;
+            font-weight: bold;
+            color: #667eea;
+        }
+        .metric-change {
+            font-size: 0.85em;
+            margin-top: 8px;
+        }
+        .metric-change.positive {
+            color: #28a745;
+        }
+        .metric-change.negative {
+            color: #dc3545;
+        }
+        .chart-section {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+        }
+        .chart-section h2 {
+            margin-bottom: 20px;
+            color: #495057;
+        }
+        .chart-container {
+            position: relative;
+            height: 300px;
+        }
+        .data-table {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            overflow-x: auto;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #e9ecef;
+        }
+        th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #495057;
+        }
+        tr:hover {
+            background: #f8f9fa;
+        }
+        .refresh-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: transform 0.2s;
+        }
+        .refresh-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .login-form {
+            max-width: 400px;
+            margin: 100px auto;
+            background: white;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+        }
+        .login-form h2 {
+            margin-bottom: 30px;
+            text-align: center;
+            color: #667eea;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #495057;
+            font-weight: 500;
+        }
+        .form-group input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            font-size: 1em;
+        }
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .error-message {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Login Form -->
+    <div id="loginSection">
+        <div class="login-form">
+            <h2>🎮 Admin Login</h2>
+            <div id="loginError" class="error-message"></div>
+            <div class="form-group">
+                <label>Email</label>
+                <input type="email" id="loginEmail" placeholder="admin@example.com">
+            </div>
+            <div class="form-group">
+                <label>Password</label>
+                <input type="password" id="loginPassword" placeholder="••••••••">
+            </div>
+            <button class="refresh-btn" onclick="login()" style="width: 100%;">
+                Login to Dashboard
+            </button>
+            <p style="text-align: center; margin-top: 20px; color: #666; font-size: 0.9em;">
+                Don't have an account? Use the main app to register first.
+            </p>
+        </div>
+    </div>
+
+    <!-- Dashboard -->
+    <div id="dashboardSection" style="display: none;">
+        <div class="header">
+            <h1>🎮 Quiz App Admin Dashboard</h1>
+            <p>Real-time analytics and system monitoring</p>
+        </div>
+
+        <div class="container">
+            <div class="btn-group">
+                <button class="refresh-btn" onclick="refreshData()">
+                    <span id="refreshIcon">🔄</span> Refresh Data
+                </button>
+                <button class="refresh-btn" onclick="logout()" style="background: #dc3545;">
+                    Logout
+                </button>
+            </div>
+
+            <!-- Key Metrics -->
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <div class="metric-label">Active Connections</div>
+                    <div class="metric-value" id="activeConnections">-</div>
+                    <div class="metric-change">Real-time users</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Active Lobbies</div>
+                    <div class="metric-value" id="activeLobbies">-</div>
+                    <div class="metric-change">Games in progress</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Messages/Second</div>
+                    <div class="metric-value" id="messagesPerSec">-</div>
+                    <div class="metric-change">Throughput</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Total Players</div>
+                    <div class="metric-value" id="totalPlayers">-</div>
+                    <div class="metric-change">Registered users</div>
+                </div>
+            </div>
+
+            <!-- Charts -->
+            <div class="chart-section">
+                <h2>📊 Games Played (Last 7 Days)</h2>
+                <div class="chart-container">
+                    <canvas id="gamesChart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-section">
+                <h2>👥 Active Players (Last 7 Days)</h2>
+                <div class="chart-container">
+                    <canvas id="playersChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Leaderboard -->
+            <div class="data-table">
+                <h2 style="margin-bottom: 20px;">🏆 Global Leaderboard (Top 100)</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Rank</th>
+                            <th>Username</th>
+                            <th>Total Score</th>
+                            <th>Games Played</th>
+                            <th>Win Rate</th>
+                            <th>Avg Score</th>
+                        </tr>
+                    </thead>
+                    <tbody id="leaderboardBody">
+                        <tr>
+                            <td colspan="6" style="text-align: center; padding: 40px;">
+                                <div class="loading"></div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let token = localStorage.getItem('adminToken');
+        let gamesChart, playersChart;
+
+        // Check if already logged in
+        if (token) {
+            showDashboard();
+            loadDashboardData();
+        }
+
+        async function login() {
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+            const errorEl = document.getElementById('loginError');
+
+            if (!email || !password) {
+                errorEl.textContent = 'Please enter email and password';
+                errorEl.style.display = 'block';
+                return;
+            }
+
+            try {
+                const response = await fetch('http://localhost:3000/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Invalid credentials');
+                }
+
+                const data = await response.json();
+                token = data.access_token;
+                localStorage.setItem('adminToken', token);
+
+                errorEl.style.display = 'none';
+                showDashboard();
+                loadDashboardData();
+            } catch (error) {
+                errorEl.textContent = 'Login failed: ' + error.message;
+                errorEl.style.display = 'block';
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('adminToken');
+            token = null;
+            document.getElementById('loginSection').style.display = 'block';
+            document.getElementById('dashboardSection').style.display = 'none';
+            document.getElementById('loginEmail').value = '';
+            document.getElementById('loginPassword').value = '';
+        }
+
+        function showDashboard() {
+            document.getElementById('loginSection').style.display = 'none';
+            document.getElementById('dashboardSection').style.display = 'block';
+        }
+
+        async function loadDashboardData() {
+            await Promise.all([
+                loadSystemMetrics(),
+                loadHistoricalData(),
+                loadLeaderboard()
+            ]);
+        }
+
+        async function loadSystemMetrics() {
+            try {
+                const response = await fetch('http://localhost:3000/analytics/dashboard', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+
+                if (!response.ok) {
+                    if (response.status === 401) {
+                        logout();
+                        return;
+                    }
+                    throw new Error('Failed to load metrics');
+                }
+
+                const data = await response.json();
+
+                document.getElementById('activeConnections').textContent = 
+                    data.system.activeConnections || 0;
+                document.getElementById('activeLobbies').textContent = 
+                    data.system.activeLobbies || 0;
+                document.getElementById('messagesPerSec').textContent = 
+                    (data.system.messagesPerSecond || 0).toFixed(2);
+                document.getElementById('totalPlayers').textContent = 
+                    data.player.totalPlayers || 0;
+            } catch (error) {
+                console.error('Error loading metrics:', error);
+            }
+        }
+
+        async function loadHistoricalData() {
+            try {
+                const response = await fetch('http://localhost:3000/analytics/historical?days=7');
+                const data = await response.json();
+
+                const dates = data.map(d => d.date);
+                const games = data.map(d => d.gamesPlayed);
+                const players = data.map(d => d.activePlayers);
+
+                // Games Chart
+                if (gamesChart) gamesChart.destroy();
+                const gamesCtx = document.getElementById('gamesChart').getContext('2d');
+                gamesChart = new Chart(gamesCtx, {
+                    type: 'line',
+                    data: {
+                        labels: dates,
+                        datasets: [{
+                            label: 'Games Played',
+                            data: games,
+                            borderColor: '#667eea',
+                            backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                            tension: 0.4,
+                            fill: true
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { display: false }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true
+                            }
+                        }
+                    }
+                });
+
+                // Players Chart
+                if (playersChart) playersChart.destroy();
+                const playersCtx = document.getElementById('playersChart').getContext('2d');
+                playersChart = new Chart(playersCtx, {
+                    type: 'bar',
+                    data: {
+                        labels: dates,
+                        datasets: [{
+                            label: 'Active Players',
+                            data: players,
+                            backgroundColor: '#764ba2'
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { display: false }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true
+                            }
+                        }
+                    }
+                });
+            } catch (error) {
+                console.error('Error loading historical data:', error);
+            }
+        }
+
+        async function loadLeaderboard() {
+            try {
+                const response = await fetch('http://localhost:3000/users/leaderboard');
+                const data = await response.json();
+
+                const tbody = document.getElementById('leaderboardBody');
+                tbody.innerHTML = '';
+
+                if (data.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 40px; color: #666;">No players yet</td></tr>';
+                    return;
+                }
+
+                data.slice(0, 100).forEach((player, index) => {
+                    const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : (index + 1);
+                    const row = `
+                        <tr>
+                            <td><strong>${medal}</strong></td>
+                            <td>${player.username}</td>
+                            <td><strong>${player.totalScore.toLocaleString()}</strong></td>
+                            <td>${player.gamesPlayed}</td>
+                            <td>${player.winRate}%</td>
+                            <td>${player.averageScore}</td>
+                        </tr>
+                    `;
+                    tbody.innerHTML += row;
+                });
+            } catch (error) {
+                console.error('Error loading leaderboard:', error);
+                const tbody = document.getElementById('leaderboardBody');
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 40px; color: #dc3545;">Failed to load leaderboard</td></tr>';
+            }
+        }
+
+        async function refreshData() {
+            const icon = document.getElementById('refreshIcon');
+            icon.style.animation = 'spin 1s linear infinite';
+            
+            await loadDashboardData();
+            
+            setTimeout(() => {
+                icon.style.animation = '';
+            }, 1000);
+        }
+
+        // Auto-refresh every 30 seconds
+        setInterval(() => {
+            if (token) {
+                loadSystemMetrics();
+            }
+        }, 30000);
+
+        // Handle Enter key in login form
+        document.getElementById('loginPassword')?.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                login();
+            }
+        });
+    </script>
+</body>
+</html>
