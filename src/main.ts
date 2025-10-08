@@ -31,4 +31,4 @@ async function bootstrap() {
   );
   console.log(` check health endpoint at http://localhost:${port}/health`);
 }
-bootstrap();
+void bootstrap();
