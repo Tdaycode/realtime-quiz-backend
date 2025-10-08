@@ -1,4 +1,3 @@
-// src/modules/lobby/lobby.gateway.ts
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
 import {
   WebSocketGateway,

@@ -1,4 +1,3 @@
-// src/data/questions.data.ts
 import { Question } from '../common/interfaces/question.interface';
 
 export const QUESTIONS_POOL: Question[] = [

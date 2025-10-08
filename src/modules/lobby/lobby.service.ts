@@ -1,4 +1,3 @@
-// src/modules/lobby/lobby.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { RedisService } from '../redis/redis.service';
 import { Lobby, LobbyStatus } from '../../common/interfaces/lobby.interface';
