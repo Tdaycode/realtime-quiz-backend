@@ -1,5 +1,4 @@
-// src/modules/game/game.service.ts
-/* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-misused-promises */
+/* eslint-disable @typescript-eslint/no-unsafe-member-access */
 import { Injectable, Logger } from '@nestjs/common';
 import { Server } from 'socket.io';
 import { RedisService } from '../redis/redis.service';
