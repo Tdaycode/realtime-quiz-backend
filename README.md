@@ -90,7 +90,7 @@ git clone <your-repo-url>
 cd realtime-quiz-backend
 
 # Install dependencies
-npm install
+yarn install
 
 # Start Redis
 brew services start redis  # macOS
@@ -103,7 +103,7 @@ docker run -d -p 6379:6379 redis  # Docker
 cp .env.example .env
 
 # Start the server
-npm run start:dev
+yarn run start:dev
 ```
 
 Server will start on `http://localhost:3000`
