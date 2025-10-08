@@ -86,7 +86,7 @@ redis-server --version  # v7 or higher
 
 ```bash
 # Clone the repository
-git clone <your-repo-url>
+git clone https://github.com/Tdaycode/realtime-quiz-backend
 cd realtime-quiz-backend
 
 # Install dependencies
