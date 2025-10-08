@@ -10,10 +10,7 @@ export class RedisService implements OnModuleDestroy {
   private readonly pubClient: Redis;
   private readonly subClient: Redis;
   constructor(private readonly configService: ConfigService) {
-    const redisUrl = this.configService.get<string>(
-      'REDIS_URL',
-      'redis://localhost:6379',
-    );
+    const redisUrl = `${process.env.REDIS_URL}`;
 
     this.client = new Redis(redisUrl);
     this.pubClient = new Redis(redisUrl);
