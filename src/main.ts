@@ -26,6 +26,9 @@ async function bootstrap() {
 
   console.log(`🚀 Server running on http://localhost:${port}`);
   console.log(`🔌 WebSocket server ready for connections`);
+  console.log(
+    `📭 CORS allowed for: ${configService.get<string>('CORS_ORIGIN', '*')}`,
+  );
+  console.log(` check health endpoint at http://localhost:${port}/health`);
 }
-
 bootstrap();
