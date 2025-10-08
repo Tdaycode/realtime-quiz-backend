@@ -3,6 +3,8 @@ import { ConfigModule } from '@nestjs/config';
 import { RedisModule } from './modules/redis/redis.module';
 import { LobbyModule } from './modules/lobby/lobby.module';
 import { GameModule } from './modules/game/game.module';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
 
 @Module({
   imports: [
@@ -13,5 +15,7 @@ import { GameModule } from './modules/game/game.module';
     LobbyModule,
     GameModule,
   ],
+  controllers: [AppController],
+  providers: [AppService],
 })
 export class AppModule {}
