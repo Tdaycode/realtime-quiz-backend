@@ -9,21 +9,15 @@ export class RedisService implements OnModuleDestroy {
   public readonly client: Redis;
   private readonly pubClient: Redis;
   private readonly subClient: Redis;
-
   constructor(private readonly configService: ConfigService) {
-    const redisConfig = {
-      host: this.configService.get<string>('REDIS_HOST', 'localhost'),
-      port: this.configService.get<number>('REDIS_PORT', 6379),
-      password: this.configService.get<string>('REDIS_PASSWORD'),
-      retryStrategy: (times: number) => {
-        const delay = Math.min(times * 50, 2000);
-        return delay;
-      },
-    };
+    const redisUrl = this.configService.get<string>(
+      'REDIS_URL',
+      'redis://localhost:6379',
+    );
 
-    this.client = new Redis(redisConfig);
-    this.pubClient = new Redis(redisConfig);
-    this.subClient = new Redis(redisConfig);
+    this.client = new Redis(redisUrl);
+    this.pubClient = new Redis(redisUrl);
+    this.subClient = new Redis(redisUrl);
   }
 
   // Lobby Management
