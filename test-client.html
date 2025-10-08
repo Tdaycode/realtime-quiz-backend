@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quiz Game Test Client - Full Version</title>
+    <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+        }
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        h1 {
+            color: #667eea;
+            margin-bottom: 30px;
+            text-align: center;
+            font-size: 2em;
+        }
+        
+        /* Lobby and Game Phases */
+        .phase {
+            display: none;
+        }
+        .phase.active {
+            display: block;
+            animation: fadeIn 0.3s;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        /* Question Display */
+        .question-container {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 15px;
+            margin-bottom: 30px;
+        }
+        .question-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 20px;
+            font-size: 0.9em;
+        }
+        .question-text {
+            font-size: 1.5em;
+            font-weight: bold;
+            margin-bottom: 15px;
+        }
+        .category-badge {
+            background: rgba(255,255,255,0.2);
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.9em;
+        }
+        .timer {
+            font-size: 2em;
+            font-weight: bold;
+        }
+        .timer.warning {
+            color: #ff6b6b;
+            animation: pulse 1s infinite;
+        }
+        
+        /* Options */
+        .options {
+            display: grid;
+            gap: 15px;
+            margin-top: 20px;
+        }
+        .option {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s;
+            border: 3px solid transparent;
+            font-size: 1.1em;
+        }
+        .option:hover {
+            transform: translateX(10px);
+            border-color: #667eea;
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
+        }
+        .option.selected {
+            border-color: #667eea;
+            background: #e8eaf6;
+        }
+        .option.correct {
+            border-color: #28a745;
+            background: #d4edda;
+        }
+        .option.incorrect {
+            border-color: #dc3545;
+            background: #f8d7da;
+        }
+        .option:disabled {
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+        
+        /* Leaderboard */
+        .leaderboard {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 10px;
+            margin-top: 20px;
+        }
+        .leaderboard h3 {
+            margin-bottom: 15px;
+            color: #495057;
+        }
+        .leaderboard-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px;
+            margin: 8px 0;
+            background: white;
+            border-radius: 8px;
+            border-left: 4px solid #6c757d;
+        }
+        .leaderboard-item.rank-1 {
+            border-left-color: #ffd700;
+            background: linear-gradient(90deg, #fff9e6 0%, white 100%);
+        }
+        .leaderboard-item.rank-2 {
+            border-left-color: #c0c0c0;
+        }
+        .leaderboard-item.rank-3 {
+            border-left-color: #cd7f32;
+        }
+        .rank {
+            font-size: 1.5em;
+            font-weight: bold;
+            min-width: 40px;
+        }
+        .player-info {
+            flex: 1;
+            margin-left: 15px;
+        }
+        .player-name {
+            font-weight: bold;
+            font-size: 1.1em;
+        }
+        .player-streak {
+            font-size: 0.85em;
+            color: #666;
+        }
+        .player-score {
+            font-size: 1.3em;
+            font-weight: bold;
+            color: #667eea;
+        }
+        
+        /* Round Results */
+        .round-result {
+            background: #fff3cd;
+            border: 2px solid #ffc107;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+            text-align: center;
+        }
+        .round-result h3 {
+            color: #856404;
+            margin-bottom: 10px;
+        }
+        
+        /* Game End */
+        .game-end {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px;
+            border-radius: 15px;
+            text-align: center;
+        }
+        .winner-announcement {
+            font-size: 2em;
+            margin: 20px 0;
+        }
+        
+        /* Utility Classes */
+        .section {
+            margin-bottom: 25px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+        }
+        .section h2 {
+            color: #495057;
+            margin-bottom: 15px;
+            font-size: 1.2em;
+        }
+        input, button {
+            padding: 12px 20px;
+            border-radius: 8px;
+            border: 2px solid #e0e0e0;
+            font-size: 14px;
+            margin: 5px;
+        }
+        input { width: calc(100% - 10px); }
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.3s;
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        .status {
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0 20px 0;
+            font-weight: bold;
+            text-align: center;
+        }
+        .status.connected {
+            background: #d4edda;
+            color: #155724;
+        }
+        .status.disconnected {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        #logs {
+            background: #1e1e1e;
+            color: #00ff00;
+            padding: 15px;
+            border-radius: 8px;
+            max-height: 250px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+        }
+        .log-entry {
+            margin: 3px 0;
+            padding: 5px;
+            border-left: 3px solid #00ff00;
+            padding-left: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎮 Quiz Game - Full Test Client</h1>
+        
+        <div id="connectionStatus" class="status disconnected">Disconnected</div>
+
+        <!-- LOBBY PHASE -->
+        <div id="lobbyPhase" class="phase active">
+            <div class="section">
+                <h2>🆕 Create Lobby</h2>
+                <input type="text" id="createUsername" placeholder="Username" value="Player1">
+                <button onclick="createLobby()">Create Lobby</button>
+            </div>
+
+            <div class="section">
+                <h2>🔗 Join Lobby</h2>
+                <input type="text" id="joinLobbyId" placeholder="Lobby Code">
+                <input type="text" id="joinUsername" placeholder="Username" value="Player2">
+                <button onclick="joinLobby()">Join Lobby</button>
+            </div>
+
+            <div class="section">
+                <h2>🎮 Lobby Controls</h2>
+                <button onclick="setReady(true)">✅ Mark Ready</button>
+                <button onclick="setReady(false)">⏳ Not Ready</button>
+                <button onclick="leaveLobby()">🚪 Leave</button>
+                <div id="currentLobby" style="margin-top: 15px;"></div>
+            </div>
+
+            <div class="section">
+                <h2>👥 Players</h2>
+                <div id="playersList"></div>
+            </div>
+        </div>
+
+        <!-- GAME PHASE -->
+        <div id="gamePhase" class="phase">
+            <div id="questionDisplay"></div>
+            <div id="roundResult"></div>
+            <div class="leaderboard">
+                <h3>🏆 Leaderboard</h3>
+                <div id="leaderboardList"></div>
+            </div>
+        </div>
+
+        <!-- GAME END PHASE -->
+        <div id="gameEndPhase" class="phase">
+            <div class="game-end">
+                <h2>🎉 Game Over!</h2>
+                <div id="winnerAnnouncement" class="winner-announcement"></div>
+                <div class="leaderboard">
+                    <h3>Final Rankings</h3>
+                    <div id="finalLeaderboard"></div>
+                </div>
+                <button onclick="returnToLobby()" style="margin-top: 20px;">Return to Lobby</button>
+            </div>
+        </div>
+
+        <!-- LOGS -->
+        <div class="section">
+            <h2>📋 Event Logs</h2>
+            <div id="logs"></div>
+        </div>
+    </div>
+
+    <script>
+        let socket;
+        let currentLobbyId = null;
+        let currentQuestion = null;
+        let timeLeft = 0;
+        let timerInterval = null;
+
+        function connectSocket() {
+            socket = io('http://localhost:3000');
+
+            socket.on('connect', () => {
+                log('✅ Connected', 'success');
+                document.getElementById('connectionStatus').className = 'status connected';
+                document.getElementById('connectionStatus').textContent = '✅ Connected';
+            });
+
+            socket.on('disconnect', () => {
+                log('❌ Disconnected', 'error');
+                document.getElementById('connectionStatus').className = 'status disconnected';
+                document.getElementById('connectionStatus').textContent = '❌ Disconnected';
+            });
+
+            socket.on('lobby_created', (data) => {
+                currentLobbyId = data.lobbyId;
+                log(`🎉 Lobby created: ${data.lobbyId}`, 'success');
+                updateLobbyDisplay();
+            });
+
+            socket.on('player_joined', (data) => {
+                log(`👋 ${data.username} joined`, 'info');
+                updatePlayers(data.gameState);
+            });
+
+            socket.on('lobby_updated', (data) => {
+                if (data.gameState) {
+                    updatePlayers(data.gameState);
+                }
+            });
+
+            socket.on('game_starting', (data) => {
+                log(`🚀 ${data.message}`, 'success');
+            });
+
+            socket.on('question_start', (data) => {
+                log(`❓ Question ${data.roundNumber}/${data.totalRounds}`, 'info');
+                showPhase('gamePhase');
+                displayQuestion(data);
+            });
+
+            socket.on('round_end', (data) => {
+                log(`✅ Round ${data.roundNumber} ended`, 'success');
+                showRoundResult(data);
+                updateLeaderboard(data.leaderboard);
+            });
+
+            socket.on('game_end', (data) => {
+                log(`🎉 Game ended! Winner: ${data.winner.username}`, 'success');
+                showGameEnd(data);
+            });
+
+            socket.on('answer_submitted', (data) => {
+                log('✅ Answer submitted', 'success');
+            });
+
+            socket.on('error', (data) => {
+                log(`❌ Error: ${data.message}`, 'error');
+                alert(data.message);
+            });
+        }
+
+        function createLobby() {
+            const username = document.getElementById('createUsername').value.trim();
+            if (!username) {
+                alert('Please enter a username');
+                return;
+            }
+            socket.emit('create_lobby', { username });
+        }
+
+        function joinLobby() {
+            const lobbyId = document.getElementById('joinLobbyId').value.trim().toUpperCase();
+            const username = document.getElementById('joinUsername').value.trim();
+            if (!lobbyId || !username) {
+                alert('Please enter lobby code and username');
+                return;
+            }
+            currentLobbyId = lobbyId;
+            socket.emit('join_lobby', { lobbyId, username });
+        }
+
+        function setReady(isReady) {
+            if (!currentLobbyId) {
+                alert('Join a lobby first');
+                return;
+            }
+            socket.emit('player_ready', { isReady });
+        }
+
+        function leaveLobby() {
+            socket.emit('leave_lobby');
+            currentLobbyId = null;
+            showPhase('lobbyPhase');
+        }
+
+        function updateLobbyDisplay() {
+            const element = document.getElementById('currentLobby');
+            if (currentLobbyId) {
+                element.innerHTML = `<strong>Lobby Code:</strong> <span style="font-size: 1.5em; color: #667eea;">${currentLobbyId}</span>`;
+            } else {
+                element.innerHTML = '<span style="color: #666;">Not in a lobby</span>';
+            }
+        }
+
+        function updatePlayers(gameState) {
+            const list = document.getElementById('playersList');
+            if (!gameState || !gameState.players || gameState.players.length === 0) {
+                list.innerHTML = '<div style="color: #666; padding: 20px; text-align: center;">No players yet</div>';
+                return;
+            }
+
+            let html = '';
+            gameState.players.forEach(player => {
+                const ready = player.isReady ? '✅ Ready' : '⏳ Not Ready';
+                const readyClass = player.isReady ? 'style="background: #d4edda;"' : '';
+                html += `
+                    <div ${readyClass} style="padding: 10px; margin: 5px 0; border-radius: 5px; display: flex; justify-content: space-between;">
+                        <span><strong>${player.username}</strong> (Score: ${player.score})</span>
+                        <span>${ready}</span>
+                    </div>
+                `;
+            });
+            list.innerHTML = html;
+        }
+
+        function displayQuestion(data) {
+            currentQuestion = data.question;
+            timeLeft = data.question.timeLimit / 1000;
+            
+            document.getElementById('roundResult').innerHTML = '';
+            
+            const questionHtml = `
+                <div class="question-container">
+                    <div class="question-header">
+                        <span>Round ${data.roundNumber}/${data.totalRounds}</span>
+                        <span class="category-badge">${data.question.category || 'General'}</span>
+                        <span class="timer" id="timer">${timeLeft}s</span>
+                    </div>
+                    <div class="question-text">${data.question.text}</div>
+                    <div class="options" id="options">
+                        ${data.question.options.map((opt, idx) => `
+                            <div class="option" onclick="selectAnswer(${idx})" id="option-${idx}">
+                                ${String.fromCharCode(65 + idx)}. ${opt}
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+            
+            document.getElementById('questionDisplay').innerHTML = questionHtml;
+            
+            startTimer();
+        }
+
+        function startTimer() {
+            if (timerInterval) clearInterval(timerInterval);
+            
+            timerInterval = setInterval(() => {
+                timeLeft--;
+                const timerEl = document.getElementById('timer');
+                if (timerEl) {
+                    timerEl.textContent = `${timeLeft}s`;
+                    if (timeLeft <= 5) {
+                        timerEl.className = 'timer warning';
+                    }
+                }
+                
+                if (timeLeft <= 0) {
+                    clearInterval(timerInterval);
+                    disableOptions();
+                }
+            }, 1000);
+        }
+
+        function selectAnswer(optionIndex) {
+            if (!currentQuestion) return;
+            
+            // Highlight selected option
+            document.querySelectorAll('.option').forEach((el, idx) => {
+                el.classList.remove('selected');
+                if (idx === optionIndex) {
+                    el.classList.add('selected');
+                }
+            });
+            
+            // Submit answer
+            socket.emit('submit_answer', {
+                questionId: currentQuestion.id,
+                selectedOption: optionIndex
+            });
+            
+            disableOptions();
+            clearInterval(timerInterval);
+            log(`📤 Submitted answer: ${String.fromCharCode(65 + optionIndex)}`, 'info');
+        }
+
+        function disableOptions() {
+            document.querySelectorAll('.option').forEach(el => {
+                el.style.cursor = 'not-allowed';
+                el.onclick = null;
+            });
+        }
+
+        function showRoundResult(data) {
+            const correctAnswer = data.correctAnswer;
+            
+            // Highlight correct/incorrect answers
+            document.querySelectorAll('.option').forEach((el, idx) => {
+                if (idx === correctAnswer) {
+                    el.classList.add('correct');
+                } else {
+                    const wasSelected = el.classList.contains('selected');
+                    if (wasSelected) {
+                        el.classList.add('incorrect');
+                    }
+                }
+            });
+            
+            const resultHtml = `
+                <div class="round-result">
+                    <h3>Round ${data.roundNumber} Complete!</h3>
+                    <p>Correct Answer: ${String.fromCharCode(65 + correctAnswer)}</p>
+                    <p style="margin-top: 10px;">Next round starting in 3 seconds...</p>
+                </div>
+            `;
+            
+            document.getElementById('roundResult').innerHTML = resultHtml;
+        }
+
+        function updateLeaderboard(leaderboard) {
+            const list = document.getElementById('leaderboardList');
+            
+            let html = '';
+            leaderboard.forEach(player => {
+                const rankClass = player.rank <= 3 ? `rank-${player.rank}` : '';
+                const medal = player.rank === 1 ? '🥇' : player.rank === 2 ? '🥈' : player.rank === 3 ? '🥉' : '';
+                const streak = player.streak > 0 ? `🔥 ${player.streak} streak` : '';
+                
+                html += `
+                    <div class="leaderboard-item ${rankClass}">
+                        <span class="rank">${medal || player.rank}</span>
+                        <div class="player-info">
+                            <div class="player-name">${player.username}</div>
+                            <div class="player-streak">${streak}</div>
+                        </div>
+                        <span class="player-score">${player.score}</span>
+                    </div>
+                `;
+            });
+            
+            list.innerHTML = html;
+        }
+
+        function showGameEnd(data) {
+            showPhase('gameEndPhase');
+            
+            document.getElementById('winnerAnnouncement').innerHTML = `
+                🏆 ${data.winner.username} wins with ${data.winner.score} points! 🏆
+            `;
+            
+            let html = '';
+            data.finalLeaderboard.forEach(player => {
+                const rankClass = player.rank <= 3 ? `rank-${player.rank}` : '';
+                const medal = player.rank === 1 ? '🥇' : player.rank === 2 ? '🥈' : player.rank === 3 ? '🥉' : '';
+                
+                html += `
+                    <div class="leaderboard-item ${rankClass}">
+                        <span class="rank">${medal || player.rank}</span>
+                        <div class="player-info">
+                            <div class="player-name">${player.username}</div>
+                        </div>
+                        <span class="player-score">${player.score}</span>
+                    </div>
+                `;
+            });
+            
+            document.getElementById('finalLeaderboard').innerHTML = html;
+        }
+
+        function returnToLobby() {
+            showPhase('lobbyPhase');
+            currentLobbyId = null;
+            currentQuestion = null;
+            updateLobbyDisplay();
+            log('🔄 Returned to lobby selection', 'info');
+        }
+
+        function showPhase(phaseId) {
+            document.querySelectorAll('.phase').forEach(el => {
+                el.classList.remove('active');
+            });
+            document.getElementById(phaseId).classList.add('active');
+        }
+
+        function log(message, type = 'info') {
+            const logs = document.getElementById('logs');
+            const time = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.innerHTML = `<span style="color: #888;">[${time}]</span> ${message}`;
+            logs.appendChild(entry);
+            logs.scrollTop = logs.scrollHeight;
+        }
+
+        window.onload = () => {
+            connectSocket();
+            log('🔌 Connecting to server...', 'info');
+        };
+    </script>
+</body>
+</html>
