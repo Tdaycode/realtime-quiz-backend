@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument */
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
@@ -77,7 +77,7 @@ export class RedisService implements OnModuleDestroy {
   }
 
   subscribe(channel: string, callback: (message: any) => void): void {
-    this.subClient.subscribe(channel);
+    void this.subClient.subscribe(channel);
     this.subClient.on('message', (ch, msg) => {
       if (ch === channel) {
         callback(JSON.parse(msg));
