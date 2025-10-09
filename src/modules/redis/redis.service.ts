@@ -10,7 +10,7 @@ export class RedisService implements OnModuleDestroy {
   public readonly client: Redis;
   private readonly pubClient: Redis;
   private readonly subClient: Redis;
-  private playerHeartbeats = new Map<string, number>(); // socketId -> timestamp
+  private readonly playerHeartbeats = new Map<string, number>(); // socketId -> timestamp
   private heartbeatCheckInterval: NodeJS.Timeout;
 
   constructor(private readonly configService: ConfigService) {
