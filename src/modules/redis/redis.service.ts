@@ -1,28 +1,31 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument */
-import { Injectable, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, OnModuleDestroy, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
 import { Lobby } from '../../common/interfaces/lobby.interface';
 
 @Injectable()
 export class RedisService implements OnModuleDestroy {
+  private readonly logger = new Logger(RedisService.name);
   public readonly client: Redis;
   private readonly pubClient: Redis;
   private readonly subClient: Redis;
+  private playerHeartbeats = new Map<string, number>(); // socketId -> timestamp
+  private heartbeatCheckInterval: NodeJS.Timeout;
 
   constructor(private readonly configService: ConfigService) {
-    const redisConfig = {
-      host: this.configService.get<string>('REDIS_HOST', 'localhost'),
-      port: this.configService.get<number>('REDIS_PORT', 6379),
-      retryStrategy: (times: number) => {
-        const delay = Math.min(times * 50, 2000);
-        return delay;
-      },
-    };
+    const redisUrl = `${process.env.REDIS_URL}`;
 
-    this.client = new Redis(redisConfig);
-    this.pubClient = new Redis(redisConfig);
-    this.subClient = new Redis(redisConfig);
+    this.client = new Redis(redisUrl);
+    this.pubClient = new Redis(redisUrl);
+    this.subClient = new Redis(redisUrl);
+  }
+
+  onModuleInit() {
+    // Check for inactive players every 30 seconds
+    this.heartbeatCheckInterval = setInterval(() => {
+      this.checkInactivePlayers();
+    }, 30000);
   }
 
   // Lobby Management
@@ -108,7 +111,27 @@ export class RedisService implements OnModuleDestroy {
     return await this.client.ping();
   }
 
+  /**
+   * Check for inactive players (no heartbeat for 60 seconds)
+   */
+  private checkInactivePlayers() {
+    const now = Date.now();
+    const timeout = 60000; // 60 seconds
+
+    this.playerHeartbeats.forEach((lastBeat, socketId) => {
+      if (now - lastBeat > timeout) {
+        this.logger.warn(`Player ${socketId} inactive, removing heartbeat`);
+        this.playerHeartbeats.delete(socketId);
+
+        // Player inactive - heartbeat removed
+      }
+    });
+  }
+
   onModuleDestroy() {
+    if (this.heartbeatCheckInterval) {
+      clearInterval(this.heartbeatCheckInterval);
+    }
     this.client.disconnect();
     this.pubClient.disconnect();
     this.subClient.disconnect();

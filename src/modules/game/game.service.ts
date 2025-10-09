@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-call */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 import { Injectable, Logger } from '@nestjs/common';
 import { Server } from 'socket.io';
@@ -158,6 +159,36 @@ export class GameService {
     this.logger.log(
       `Player ${playerId} answered ${isCorrect ? 'correctly' : 'incorrectly'} (+${score} points)`,
     );
+  }
+
+  /**
+   * Get remaining time for current question
+   */
+  async getRemainingTime(lobbyId: string): Promise<number> {
+    const lobby = await this.redisService.getLobby(lobbyId);
+
+    if (!lobby || !lobby.questionStartTime) {
+      return 0;
+    }
+
+    const elapsed = Date.now() - lobby.questionStartTime;
+    const timeLimit = GAME_CONFIG.QUESTION_TIME_LIMIT;
+    const remaining = Math.max(0, timeLimit - elapsed);
+
+    return Math.ceil(remaining / 1000); // Return in seconds
+  }
+
+  /**
+   * Get current leaderboard
+   */
+  async getLeaderboard(lobbyId: string): Promise<LeaderboardEntry[]> {
+    const lobby = await this.redisService.getLobby(lobbyId);
+
+    if (!lobby) {
+      return [];
+    }
+
+    return this.generateLeaderboard(lobby);
   }
 
   /**

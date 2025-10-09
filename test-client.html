@@ -324,12 +324,15 @@
         </div>
     </div>
 
-    <script>
+    <!-- <script>
         let socket;
         let currentLobbyId = null;
         let currentQuestion = null;
         let timeLeft = 0;
         let timerInterval = null;
+        let reconnectAttempts = 0;
+        let maxReconnectAttempts = 10;
+        let isIntentionalDisconnect = false;
 
         function connectSocket() {
             socket = io('http://localhost:3000');
@@ -641,6 +644,567 @@
             connectSocket();
             log('🔌 Connecting to server...', 'info');
         };
+    </script> -->
+
+    <script>
+        let socket;
+let currentLobbyId = null;
+let currentQuestion = null;
+let timeLeft = 0;
+let timerInterval = null;
+let reconnectAttempts = 0;
+let isIntentionalDisconnect = false;
+let pendingActions = [];
+let heartbeatInterval = null;
+let isPageVisible = !document.hidden;
+
+// Initialize on page load
+window.onload = () => {
+    connectSocket();
+    setupVisibilityListener();
+    restoreSession();
+    log('🔌 Connecting to server...', 'info');
+};
+
+function connectSocket() {
+    socket = io('http://localhost:3000', {
+        reconnection: true,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
+        reconnectionAttempts: Infinity,
+        timeout: 10000,
+        transports: ['websocket', 'polling'],
+    });
+
+    socket.on('connect', () => {
+        log('✅ Connected to server', 'success');
+        reconnectAttempts = 0;
+        document.getElementById('connectionStatus').className = 'status connected';
+        document.getElementById('connectionStatus').textContent = '✅ Connected';
+        hideOfflineOverlay();
+        
+        // Process pending actions
+        if (pendingActions.length > 0) {
+            log(`📤 Sending ${pendingActions.length} pending actions...`, 'info');
+            pendingActions.forEach(action => {
+                socket.emit(action.type, action.data);
+            });
+            pendingActions = [];
+        }
+        
+        // Restore session if exists
+        const savedLobby = localStorage.getItem('currentLobby');
+        const savedUsername = localStorage.getItem('username');
+        
+        if (savedLobby && savedUsername && currentLobbyId) {
+            log('🔄 Restoring session...', 'info');
+            socket.emit('rejoin_lobby', { 
+                lobbyId: savedLobby,
+                username: savedUsername
+            });
+        }
+    });
+
+    socket.on('disconnect', (reason) => {
+        log(`❌ Disconnected: ${reason}`, 'error');
+        document.getElementById('connectionStatus').className = 'status disconnected';
+        document.getElementById('connectionStatus').textContent = '❌ Disconnected';
+        stopHeartbeat();
+        
+        if (!isIntentionalDisconnect) {
+            showOfflineOverlay();
+        }
+    });
+
+    socket.on('reconnect', (attemptNumber) => {
+        log(`🔄 Reconnected after ${attemptNumber} attempts`, 'success');
+    });
+
+    socket.on('reconnect_attempt', (attemptNumber) => {
+        reconnectAttempts = attemptNumber;
+        log(`🔄 Reconnection attempt ${attemptNumber}...`, 'info');
+        updateReconnectAttempt(attemptNumber);
+    });
+
+    socket.on('reconnect_error', (error) => {
+        log(`❌ Reconnection error`, 'error');
+    });
+
+    socket.on('reconnect_failed', () => {
+        log('❌ Reconnection failed. Please refresh.', 'error');
+        showReconnectFailed();
+    });
+
+    socket.on('lobby_created', (data) => {
+        currentLobbyId = data.lobbyId;
+        log(`🎉 Lobby created: ${data.lobbyId}`, 'success');
+        saveSession(data.lobbyId);
+        updateLobbyDisplay();
+        startHeartbeat();
+    });
+
+    socket.on('player_joined', (data) => {
+        log(`👋 ${data.username} joined`, 'info');
+        updatePlayers(data.gameState);
+        saveSession(currentLobbyId);
+        startHeartbeat();
+    });
+
+    socket.on('lobby_updated', (data) => {
+        if (data.gameState) {
+            updatePlayers(data.gameState);
+        }
+    });
+
+    socket.on('game_starting', (data) => {
+        log(`🚀 ${data.message}`, 'success');
+    });
+
+    socket.on('question_start', (data) => {
+        log(`❓ Question ${data.roundNumber}/${data.totalRounds}`, 'info');
+        showPhase('gamePhase');
+        timeLeft = data.timeRemaining || (data.question.timeLimit / 1000);
+        displayQuestion(data);
+    });
+
+    socket.on('round_end', (data) => {
+        log(`✅ Round ${data.roundNumber} ended`, 'success');
+        showRoundResult(data);
+        updateLeaderboard(data.leaderboard);
+    });
+
+    socket.on('game_end', (data) => {
+        log(`🎉 Game ended! Winner: ${data.winner.username}`, 'success');
+        showGameEnd(data);
+        stopHeartbeat();
+    });
+
+    socket.on('answer_submitted', (data) => {
+        log('✅ Answer submitted', 'success');
+    });
+
+    socket.on('game_state_sync', (data) => {
+        log('🔄 Syncing game state...', 'info');
+        
+        if (data.currentQuestion) {
+            showPhase('gamePhase');
+            displayQuestion({
+                question: data.currentQuestion,
+                roundNumber: data.roundNumber,
+                totalRounds: data.totalRounds,
+                timeRemaining: data.remainingTime
+            });
+            timeLeft = data.remainingTime;
+        }
+        
+        if (data.leaderboard) {
+            updateLeaderboard(data.leaderboard);
+        }
+    });
+
+    socket.on('error', (data) => {
+        log(`❌ Error: ${data.message}`, 'error');
+        alert(data.message);
+    });
+}
+
+// Session Management
+function saveSession(lobbyId) {
+    localStorage.setItem('currentLobby', lobbyId);
+    const username = document.getElementById('createUsername').value || 
+                     document.getElementById('joinUsername').value;
+    if (username) {
+        localStorage.setItem('username', username);
+    }
+}
+
+function restoreSession() {
+    const savedLobby = localStorage.getItem('currentLobby');
+    const savedUsername = localStorage.getItem('username');
+    
+    if (savedLobby) {
+        currentLobbyId = savedLobby;
+        document.getElementById('joinLobbyId').value = savedLobby;
+    }
+    
+    if (savedUsername) {
+        document.getElementById('createUsername').value = savedUsername;
+        document.getElementById('joinUsername').value = savedUsername;
+    }
+}
+
+function clearSession() {
+    localStorage.removeItem('currentLobby');
+    localStorage.removeItem('username');
+    currentLobbyId = null;
+}
+
+// Visibility Management
+function setupVisibilityListener() {
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+            log('📱 App went to background', 'info');
+            isPageVisible = false;
+            
+            if (timerInterval) {
+                clearInterval(timerInterval);
+            }
+        } else {
+            log('📱 App came to foreground', 'info');
+            isPageVisible = true;
+            
+            if (currentLobbyId && socket.connected) {
+                socket.emit('request_game_state', { lobbyId: currentLobbyId });
+            }
+            
+            if (!socket.connected) {
+                log('🔄 Reconnecting...', 'info');
+                socket.connect();
+            }
+        }
+    });
+}
+
+// Heartbeat
+function startHeartbeat() {
+    if (heartbeatInterval) return;
+    
+    heartbeatInterval = setInterval(() => {
+        if (socket.connected && currentLobbyId) {
+            socket.emit('heartbeat', { 
+                lobbyId: currentLobbyId,
+                timestamp: Date.now()
+            });
+        }
+    }, 25000);
+}
+
+function stopHeartbeat() {
+    if (heartbeatInterval) {
+        clearInterval(heartbeatInterval);
+        heartbeatInterval = null;
+    }
+}
+
+// UI Functions
+function createLobby() {
+    const username = document.getElementById('createUsername').value.trim();
+    if (!username) {
+        alert('Please enter a username');
+        return;
+    }
+    socket.emit('create_lobby', { username });
+}
+
+function joinLobby() {
+    const lobbyId = document.getElementById('joinLobbyId').value.trim().toUpperCase();
+    const username = document.getElementById('joinUsername').value.trim();
+    if (!lobbyId || !username) {
+        alert('Please enter lobby code and username');
+        return;
+    }
+    currentLobbyId = lobbyId;
+    socket.emit('join_lobby', { lobbyId, username });
+}
+
+function setReady(isReady) {
+    if (!currentLobbyId) {
+        alert('Join a lobby first');
+        return;
+    }
+    socket.emit('player_ready', { isReady });
+}
+
+function leaveLobby() {
+    isIntentionalDisconnect = true;
+    socket.emit('leave_lobby');
+    stopHeartbeat();
+    clearSession();
+    showPhase('lobbyPhase');
+    isIntentionalDisconnect = false;
+}
+
+function selectAnswer(optionIndex) {
+    if (!currentQuestion) return;
+    
+    document.querySelectorAll('.option').forEach((el, idx) => {
+        el.classList.remove('selected');
+        if (idx === optionIndex) {
+            el.classList.add('selected');
+        }
+    });
+    
+    const answer = {
+        questionId: currentQuestion.id,
+        selectedOption: optionIndex,
+        timestamp: Date.now()
+    };
+    
+    if (socket.connected) {
+        socket.emit('submit_answer', answer);
+        log(`📤 Submitted answer: ${String.fromCharCode(65 + optionIndex)}`, 'info');
+    } else {
+        pendingActions.push({ type: 'submit_answer', data: answer });
+        log('⏳ Answer queued (offline)', 'warning');
+    }
+    
+    disableOptions();
+    clearInterval(timerInterval);
+}
+
+function displayQuestion(data) {
+    currentQuestion = data.question;
+    
+    document.getElementById('roundResult').innerHTML = '';
+    
+    const questionHtml = `
+        <div class="question-container">
+            <div class="question-header">
+                <span>Round ${data.roundNumber}/${data.totalRounds}</span>
+                <span class="category-badge">${data.question.category || 'General'}</span>
+                <span class="timer" id="timer">${timeLeft}s</span>
+            </div>
+            <div class="question-text">${data.question.text}</div>
+            <div class="options" id="options">
+                ${data.question.options.map((opt, idx) => `
+                    <div class="option" onclick="selectAnswer(${idx})" id="option-${idx}">
+                        ${String.fromCharCode(65 + idx)}. ${opt}
+                    </div>
+                `).join('')}
+            </div>
+        </div>
+    `;
+    
+    document.getElementById('questionDisplay').innerHTML = questionHtml;
+    startTimer();
+}
+
+function startTimer() {
+    if (timerInterval) clearInterval(timerInterval);
+    
+    const endTime = Date.now() + (timeLeft * 1000);
+    
+    timerInterval = setInterval(() => {
+        const remaining = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
+        timeLeft = remaining;
+        
+        const timerEl = document.getElementById('timer');
+        if (timerEl) {
+            timerEl.textContent = `${remaining}s`;
+            if (remaining <= 5) {
+                timerEl.className = 'timer warning';
+            }
+        }
+        
+        if (remaining <= 0) {
+            clearInterval(timerInterval);
+            disableOptions();
+            log('⏰ Time expired', 'warning');
+        }
+    }, 100);
+}
+
+// Offline Overlay
+function showOfflineOverlay() {
+    if (document.getElementById('offlineOverlay')) return;
+    
+    const overlay = document.createElement('div');
+    overlay.id = 'offlineOverlay';
+    overlay.style.cssText = `
+        position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(0, 0, 0, 0.9); display: flex;
+        align-items: center; justify-content: center; z-index: 10000;
+        color: white; flex-direction: column; gap: 20px;
+    `;
+    overlay.innerHTML = `
+        <div style="border: 4px solid #f3f3f3; border-top: 4px solid #667eea;
+                    border-radius: 50%; width: 50px; height: 50px;
+                    animation: spin 1s linear infinite;"></div>
+        <h2>Connection Lost</h2>
+        <p>Attempting to reconnect...</p>
+        <p id="reconnectAttemptDisplay">Attempt 1</p>
+    `;
+    document.body.appendChild(overlay);
+}
+
+function hideOfflineOverlay() {
+    const overlay = document.getElementById('offlineOverlay');
+    if (overlay) overlay.remove();
+}
+
+function updateReconnectAttempt(attempt) {
+    const el = document.getElementById('reconnectAttemptDisplay');
+    if (el) el.textContent = `Attempt ${attempt}`;
+}
+
+function showReconnectFailed() {
+    const overlay = document.getElementById('offlineOverlay');
+    if (overlay) {
+        overlay.innerHTML = `
+            <h2 style="color: #dc3545;">❌ Connection Failed</h2>
+            <p>Unable to reconnect to server</p>
+            <button onclick="location.reload()" style="padding: 10px 20px; 
+                    background: #667eea; color: white; border: none;
+                    border-radius: 8px; cursor: pointer; font-size: 16px;">
+                Refresh Page
+            </button>
+        `;
+    }
+}
+
+// Other existing functions (updateLobbyDisplay, updatePlayers, etc.)
+// Keep all your existing functions here...
+
+function disableOptions() {
+    document.querySelectorAll('.option').forEach(el => {
+        el.style.cursor = 'not-allowed';
+        el.onclick = null;
+    });
+}
+
+function showRoundResult(data) {
+    const correctAnswer = data.correctAnswer;
+    
+    document.querySelectorAll('.option').forEach((el, idx) => {
+        if (idx === correctAnswer) {
+            el.classList.add('correct');
+        } else {
+            const wasSelected = el.classList.contains('selected');
+            if (wasSelected) {
+                el.classList.add('incorrect');
+            }
+        }
+    });
+    
+    const resultHtml = `
+        <div class="round-result">
+            <h3>Round ${data.roundNumber} Complete!</h3>
+            <p>Correct Answer: ${String.fromCharCode(65 + correctAnswer)}</p>
+            <p style="margin-top: 10px;">Next round starting soon...</p>
+        </div>
+    `;
+    
+    document.getElementById('roundResult').innerHTML = resultHtml;
+}
+
+function updateLeaderboard(leaderboard) {
+    const list = document.getElementById('leaderboardList');
+    
+    let html = '';
+    leaderboard.forEach(player => {
+        const rankClass = player.rank <= 3 ? `rank-${player.rank}` : '';
+        const medal = player.rank === 1 ? '🥇' : player.rank === 2 ? '🥈' : player.rank === 3 ? '🥉' : '';
+        const streak = player.streak > 0 ? `🔥 ${player.streak} streak` : '';
+        
+        html += `
+            <div class="leaderboard-item ${rankClass}">
+                <span class="rank">${medal || player.rank}</span>
+                <div class="player-info">
+                    <div class="player-name">${player.username}</div>
+                    <div class="player-streak">${streak}</div>
+                </div>
+                <span class="player-score">${player.score}</span>
+            </div>
+        `;
+    });
+    
+    list.innerHTML = html;
+}
+
+function updateLobbyDisplay() {
+    const element = document.getElementById('currentLobby');
+    if (currentLobbyId) {
+        element.innerHTML = `<strong>Lobby Code:</strong> <span style="font-size: 1.5em; color: #667eea;">${currentLobbyId}</span>`;
+    } else {
+        element.innerHTML = '<span style="color: #666;">Not in a lobby</span>';
+    }
+}
+
+function updatePlayers(gameState) {
+    const list = document.getElementById('playersList');
+    if (!gameState || !gameState.players || gameState.players.length === 0) {
+        list.innerHTML = '<div style="color: #666; padding: 20px; text-align: center;">No players yet</div>';
+        return;
+    }
+
+    let html = '';
+    gameState.players.forEach(player => {
+        const ready = player.isReady ? '✅ Ready' : '⏳ Not Ready';
+        const readyClass = player.isReady ? 'style="background: #d4edda;"' : '';
+        html += `
+            <div ${readyClass} style="padding: 10px; margin: 5px 0; border-radius: 5px; display: flex; justify-content: space-between;">
+                <span><strong>${player.username}</strong> (Score: ${player.score})</span>
+                <span>${ready}</span>
+            </div>
+        `;
+    });
+    list.innerHTML = html;
+}
+
+function showGameEnd(data) {
+    showPhase('gameEndPhase');
+    
+    document.getElementById('winnerAnnouncement').innerHTML = `
+        🏆 ${data.winner.username} wins with ${data.winner.score} points! 🏆
+    `;
+    
+    let html = '';
+    data.finalLeaderboard.forEach(player => {
+        const rankClass = player.rank <= 3 ? `rank-${player.rank}` : '';
+        const medal = player.rank === 1 ? '🥇' : player.rank === 2 ? '🥈' : player.rank === 3 ? '🥉' : '';
+        
+        html += `
+            <div class="leaderboard-item ${rankClass}">
+                <span class="rank">${medal || player.rank}</span>
+                <div class="player-info">
+                    <div class="player-name">${player.username}</div>
+                </div>
+                <span class="player-score">${player.score}</span>
+            </div>
+        `;
+    });
+    
+    document.getElementById('finalLeaderboard').innerHTML = html;
+}
+
+function returnToLobby() {
+    showPhase('lobbyPhase');
+    currentLobbyId = null;
+    currentQuestion = null;
+    clearSession();
+    updateLobbyDisplay();
+    log('🔄 Returned to lobby selection', 'info');
+}
+
+function showPhase(phaseId) {
+    document.querySelectorAll('.phase').forEach(el => {
+        el.classList.remove('active');
+    });
+    document.getElementById(phaseId).classList.add('active');
+}
+
+function log(message, type = 'info') {
+    const logs = document.getElementById('logs');
+    const time = new Date().toLocaleTimeString();
+    const entry = document.createElement('div');
+    entry.className = 'log-entry';
+    
+    const colors = {
+        success: '#00ff00',
+        error: '#ff6b6b',
+        warning: '#ffc107',
+        info: '#00ff00'
+    };
+    
+    entry.innerHTML = `<span style="color: #888;">[${time}]</span> <span style="color: ${colors[type] || colors.info}">${message}</span>`;
+    logs.appendChild(entry);
+    logs.scrollTop = logs.scrollHeight;
+    
+    // Keep only last 50 logs
+    while (logs.children.length > 50) {
+        logs.removeChild(logs.firstChild);
+    }
+}
     </script>
 </body>
 </html>

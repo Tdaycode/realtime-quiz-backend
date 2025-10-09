@@ -28,6 +28,8 @@ export class LobbyService {
       currentStreak: 0,
       joinedAt: Date.now(),
       isReady: true, // Host is auto-ready
+      answeredQuestions: new Set<string>(),
+      streak: 0,
     };
 
     const lobby: Lobby = {
@@ -85,6 +87,8 @@ export class LobbyService {
       currentStreak: 0,
       joinedAt: Date.now(),
       isReady: false,
+      answeredQuestions: new Set<string>(),
+      streak: 0,
     };
 
     lobby.players.set(playerId, player);
@@ -238,6 +242,94 @@ export class LobbyService {
       players,
       leaderboard,
     };
+  }
+
+  /**
+   * Update player's socket ID (for reconnections)
+   */
+  async updatePlayerSocketId(
+    lobbyId: string,
+    playerId: string,
+    newSocketId: string,
+  ): Promise<Lobby> {
+    const lobby = await this.getLobby(lobbyId);
+
+    if (!lobby) {
+      throw new Error('Lobby not found');
+    }
+
+    const player = Array.from(lobby.players.values()).find(
+      (p) => p.id === playerId,
+    );
+
+    if (!player) {
+      throw new Error('Player not found in lobby');
+    }
+
+    // Update socket ID
+    player.socketId = newSocketId;
+    player.isDisconnected = false;
+    player.isActive = true;
+
+    // Clear any disconnect timer
+    await this.redisService.saveLobby(lobbyId, lobby);
+
+    return lobby;
+  }
+
+  /**
+   * Mark player as disconnected (temporary)
+   */
+  async markPlayerDisconnected(socketId: string): Promise<void> {
+    const lobby = await this.getPlayerLobby(socketId);
+
+    if (lobby) {
+      const player = Array.from(lobby.players.values()).find(
+        (p) => p.socketId === socketId,
+      );
+      if (player) {
+        player.isDisconnected = true;
+        player.disconnectedAt = Date.now();
+        await this.redisService.saveLobby(lobby.id, lobby);
+      }
+    }
+  }
+
+  /**
+   * Mark player as inactive (backgrounded)
+   */
+  async markPlayerInactive(socketId: string): Promise<void> {
+    const lobby = await this.getPlayerLobby(socketId);
+
+    if (lobby) {
+      const player = Array.from(lobby.players.values()).find(
+        (p) => p.socketId === socketId,
+      );
+      if (player) {
+        player.isActive = false;
+        player.lastActiveAt = Date.now();
+        await this.redisService.saveLobby(lobby.id, lobby);
+      }
+    }
+  }
+
+  /**
+   * Mark player as active (foreground)
+   */
+  async markPlayerActive(socketId: string): Promise<void> {
+    const lobby = await this.getPlayerLobby(socketId);
+
+    if (lobby) {
+      const player = Array.from(lobby.players.values()).find(
+        (p) => p.socketId === socketId,
+      );
+      if (player) {
+        player.isActive = true;
+        player.isDisconnected = false;
+        player.lastActiveAt = Date.now();
+        await this.redisService.saveLobby(lobby.id, lobby);
+      }
+    }
   }
 
   /**

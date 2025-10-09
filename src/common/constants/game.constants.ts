@@ -18,6 +18,15 @@ export const GAME_CONFIG = {
     LEAVE_LOBBY: 'leave_lobby',
     SUBMIT_ANSWER: 'submit_answer',
     PLAYER_READY: 'player_ready',
+    PLAYER_REJOINED: 'player_rejoined',
+    PLAYER_DISCONNECTED: 'player_disconnected',
+    GAME_STATE_SYNC: 'game_state_sync',
+    HEARTBEAT: 'heartbeat',
+    HEARTBEAT_ACK: 'heartbeat_ack',
+    PLAYER_INACTIVE: 'player_inactive',
+    PLAYER_ACTIVE: 'player_active',
+    REQUEST_GAME_STATE: 'request_game_state',
+    REJOIN_LOBBY: 'rejoin_lobby',
 
     // Server to Client
     LOBBY_CREATED: 'lobby_created',
